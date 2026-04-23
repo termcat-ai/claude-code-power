@@ -1,0 +1,70 @@
+{
+  "name": "claude-code-power",
+  "version": "1.0.0",
+  "description": "Claude Code 适配插件 — 自动识别并增强 TermCat 中运行的 Claude Code 会话",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/termcat-ai/claude-code-power.git"
+  },
+  "homepage": "https://github.com/termcat-ai/claude-code-power",
+  "bugs": "https://github.com/termcat-ai/claude-code-power/issues",
+  "main": "dist/extension.js",
+  "termcat": {
+    "displayName": {
+      "zh": "Claude Code Power",
+      "en": "Claude Code Power",
+      "es": "Claude Code Power"
+    },
+    "description": {
+      "zh": "自动识别当前终端在跑的 Claude Code，右侧面板补充驱动模式切换、提问历史+Undo、调用详情与多套模型配置",
+      "en": "Auto-detect running Claude Code in the active terminal; adds drive mode switcher, prompt history with undo, call details and multi-preset model configs.",
+      "es": "Detecta Claude Code en la terminal activa; añade conmutador de modo, historial con deshacer, detalles de llamada y presets de modelo."
+    },
+    "entry": "dist/extension.js",
+    "activationEvents": [
+      "onStartup",
+      "onTerminalOpen"
+    ],
+    "permissions": [
+      "terminal.read",
+      "terminal.write",
+      "files.read",
+      "files.write"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "claude-code-power.togglePanel",
+          "title": {
+            "zh": "打开/关闭 Claude Code Power 面板",
+            "en": "Toggle Claude Code Power Panel",
+            "es": "Alternar Panel de Claude Code Power"
+          }
+        },
+        {
+          "id": "claude-code-power.launchClaude",
+          "title": {
+            "zh": "启动 Claude Code（使用当前 Preset）",
+            "en": "Launch Claude Code (with active preset)",
+            "es": "Iniciar Claude Code (con preset activo)"
+          }
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "pack": "npm run build && cd dist && tar -czf ../claude-code-power.tgz ."
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "pidtree": "^0.6.0",
+    "uuid": "^9.0.1"
+  }
+}

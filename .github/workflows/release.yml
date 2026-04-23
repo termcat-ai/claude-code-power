@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Only build, do not publish a release'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve version
+        id: resolve
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+              echo "::error::package.json version ($PKG_VERSION) does not match tag ($TAG_VERSION). Bump package.json and retag."
+              exit 1
+            fi
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tgz=claude-code-power-${PKG_VERSION}.tgz" >> "$GITHUB_OUTPUT"
+          echo "Using version: $PKG_VERSION"
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify build output
+        shell: bash
+        run: |
+          test -f dist/extension.js       || { echo "::error::dist/extension.js missing"; exit 1; }
+          test -f dist/package.json       || { echo "::error::dist/package.json missing"; exit 1; }
+          # 确认 chokidar 已 bundle（不应出现 external require）
+          if grep -qE 'require\("chokidar"\)' dist/extension.js; then
+            echo "::error::chokidar was not bundled — esbuild external list may be wrong"
+            exit 1
+          fi
+          echo "dist/ size: $(du -sh dist | cut -f1)"
+          ls -la dist
+
+      - name: Package tgz
+        shell: bash
+        run: |
+          TGZ="${{ steps.resolve.outputs.tgz }}"
+          tar -czf "$TGZ" package.json dist README.md
+          ls -lh "$TGZ"
+
+      - name: Upload build artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-power-${{ steps.resolve.outputs.version }}
+          path: ${{ steps.resolve.outputs.tgz }}
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          name: Claude Code Power ${{ steps.resolve.outputs.version }}
+          files: ${{ steps.resolve.outputs.tgz }}
+          body: |
+            ## Claude Code Power ${{ steps.resolve.outputs.version }}
+
+            TermCat 的 Claude Code 适配插件。
+
+            ### 安装
+
+            1. 下载 `${{ steps.resolve.outputs.tgz }}`
+            2. 解压到 TermCat 插件目录：
+               - macOS: `~/Library/Application Support/termcat/plugins/claude-code-power/`
+               - Linux: `~/.config/termcat/plugins/claude-code-power/`
+               - Windows: `%APPDATA%\termcat\plugins\claude-code-power\`
+            3. 在 TermCat 『设置 → 插件』启用
+            4. 完全退出 TermCat 再重启
+
+            ### 包内容
+            - `package.json` — 插件 manifest
+            - `dist/extension.js` — 主入口（已 bundle chokidar 等依赖）
+            - `dist/extension.js.map` — sourcemap（调试用）
+            - `dist/package.json` — 构建产物 manifest 副本
+            - `README.md`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
