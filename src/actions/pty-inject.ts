@@ -28,10 +28,18 @@ export class PtyInjector {
     });
   }
 
-  /** Ctrl+U + text + CR — explicit "run now" (used by the launch button). */
+  /**
+   * Ctrl+U + text + CR — explicit "run now" (used by the launch button).
+   *
+   * On Windows the Ctrl+U is suppressed: launch goes into the shell prompt
+   * (PowerShell / cmd), and conhost without PSReadLine echoes the raw `\x15`
+   * NAK byte into the input buffer, which then becomes a parse error
+   * (`. : 无法将"."项识别为 cmdlet`). Trade-off: any text the user typed
+   * before clicking launch is appended rather than cleared.
+   */
   async sendLine(sessionId: string, text: string): Promise<void> {
     return this.enqueue(sessionId, async () => {
-      await this.write(sessionId, CTRL_U);
+      if (process.platform !== 'win32') await this.write(sessionId, CTRL_U);
       if (text) await this.write(sessionId, text);
       await this.write(sessionId, '\r');
     });
