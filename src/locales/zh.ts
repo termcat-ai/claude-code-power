@@ -70,7 +70,6 @@ export const zh = {
   emptyHistory: '尚无历史 — 第一次输入 prompt 后会在这里出现',
   undoButtonTooltip: '回滚到此条',
   confirmRewind: '保留到第 {target} 条，丢弃后续 {n} 个 prompt 及其工具结果。磁盘文件由 Claude Code 的 checkpoint 机制负责恢复，本插件不参与。',
-  rewindManualHint: '请在 claude 里连续处理 {n} 次',
   toolCountSummary: '{count} 次工具',
   expandTooltip: '展开',
   gotoTurnTooltip: '跳转到调用详情并定位该提问',

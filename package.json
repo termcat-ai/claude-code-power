@@ -2,13 +2,6 @@
   "name": "claude-code-power",
   "version": "1.0.0",
   "description": "Claude Code 适配插件 — 自动识别并增强 TermCat 中运行的 Claude Code 会话",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/termcat-ai/claude-code-power.git"
-  },
-  "homepage": "https://github.com/termcat-ai/claude-code-power",
-  "bugs": "https://github.com/termcat-ai/claude-code-power/issues",
   "main": "dist/extension.js",
   "termcat": {
     "displayName": {

@@ -72,7 +72,6 @@ export const es: LocaleKeys = {
   emptyHistory: 'Aún no hay historial — tu primer prompt aparecerá aquí',
   undoButtonTooltip: 'Retroceder a este turno',
   confirmRewind: 'Mantener hasta el turno #{target}, descartando los siguientes {n} prompts y sus resultados de herramientas. La recuperación de archivos la maneja el mecanismo de checkpoint de Claude Code — este plugin no participa.',
-  rewindManualHint: 'Continúa el rewind en claude {n} vez/veces más',
   toolCountSummary: '{count} llamada(s) a herramienta',
   expandTooltip: 'Expandir',
   gotoTurnTooltip: 'Ir a los detalles de la llamada y enfocar este prompt',

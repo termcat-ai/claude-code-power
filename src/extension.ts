@@ -643,12 +643,8 @@ function buildHandlerDeps() {
     },
     rewindDeps: {
       showConfirm: (msg: string) => api.ui.showConfirm(msg),
-      showNotification: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') =>
-        api.ui.showNotification(msg, type),
       confirmRewind: (target: number, steps: number) =>
         fmt(t().confirmRewind, { target, n: steps }),
-      manualHint: (steps: number) => fmt(t().rewindManualHint, { n: steps }),
-      supportsNumericArg: false,
     },
     presetApplyDeps: {
       showConfirm: (msg: string) => api.ui.showConfirm(msg),

@@ -79,8 +79,15 @@ export class Detector {
         let status: TabStatus = 'idle';
 
         if (claudePid != null) {
-          cwd = await this.resolveCwd(claudePid).catch(() => null);
-          const { mtimeMs, file } = await this.latestJsonlForCwd(cwd);
+          // Pointer file ~/.claude/sessions/<pid>.json carries the authoritative
+          // sessionId AND cwd for this claude pid. Prefer it over lsof/mtime —
+          // when multiple tabs run claude in the same cwd, mtime-based selection
+          // races and the wrong JSONL gets bound to each tab.
+          const pointer = await this.readSessionPointer(claudePid);
+          cwd =
+            pointer?.cwd ??
+            (await this.resolveCwd(claudePid).catch(() => null));
+          const { mtimeMs, file } = await this.resolveSessionFile(pointer?.sessionId ?? null, cwd);
           sessionFile = file;
           const now = Date.now();
           const fresh = mtimeMs && now - mtimeMs < JSONL_FRESH_MS;
@@ -181,6 +188,55 @@ export class Detector {
     // reverse-derive cwd.
     const { leaf } = await this.latestJsonlGlobal();
     return leaf ? cwdFromProjectDirLeaf(leaf) : null;
+  }
+
+  /**
+   * Read ~/.claude/sessions/<pid>.json — Claude Code 2.1.x writes one of these
+   * per running claude process, carrying the live sessionId and cwd. Returns
+   * null if the file is missing (older claude) or malformed.
+   */
+  private async readSessionPointer(
+    claudePid: number,
+  ): Promise<{ sessionId: string; cwd: string | null } | null> {
+    const file = path.join(os.homedir(), '.claude', 'sessions', `${claudePid}.json`);
+    try {
+      const raw = await fs.promises.readFile(file, 'utf-8');
+      const j = JSON.parse(raw) as { sessionId?: unknown; cwd?: unknown };
+      if (typeof j.sessionId !== 'string' || !j.sessionId) return null;
+      return {
+        sessionId: j.sessionId,
+        cwd: typeof j.cwd === 'string' ? j.cwd : null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolve the JSONL path for this tab. Pointer-derived sessionId wins (exact
+   * match by claude pid). Otherwise fall back to "latest mtime in projectDir",
+   * which is racy when two tabs share a cwd.
+   */
+  private async resolveSessionFile(
+    sessionId: string | null,
+    cwd: string | null,
+  ): Promise<{ mtimeMs: number | null; file: string | null }> {
+    if (sessionId && cwd) {
+      const file = path.join(
+        os.homedir(),
+        '.claude',
+        'projects',
+        encodeCwd(cwd),
+        `${sessionId}.jsonl`,
+      );
+      try {
+        const stat = await fs.promises.stat(file);
+        return { mtimeMs: stat.mtimeMs, file };
+      } catch {
+        /* file not yet created — fall through to mtime fallback */
+      }
+    }
+    return this.latestJsonlForCwd(cwd);
   }
 
   private async latestJsonlForCwd(
