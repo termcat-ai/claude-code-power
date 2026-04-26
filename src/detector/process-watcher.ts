@@ -20,6 +20,13 @@ const TICK_MS = 5000;
 const JSONL_FRESH_MS = 60_000;
 const STALE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
 
+// Process-name match: posix `claude`, win `claude.exe / claude.cmd / claude.ps1`.
+const CLAUDE_NAME_RE = /^claude(?:\.(?:exe|cmd|ps1))?$/i;
+// CommandLine match for npm-global installs where the process is `node` /
+// `node.exe` and the script path identifies the package. Anchored to the
+// package directory so `claude-pay-attention.sh` etc. don't false-match.
+const CLAUDE_CMDLINE_RE = /[\\/]@anthropic-ai[\\/]claude-code[\\/]/i;
+
 export interface TerminalHandle {
   sessionId: string;
   getPid: () => Promise<number | null>;
@@ -130,10 +137,12 @@ export class Detector {
     for (const pid of descendants) {
       const entry = byPid.get(pid);
       if (!entry) continue;
-      if (entry.name === 'claude' || /(^|\/)claude$/.test(entry.name)) return pid;
-      if (entry.cmd && /\bclaude\b/.test(entry.cmd) && !/claude-/.test(entry.cmd)) {
-        // crude check — avoid matching `claude-pay-attention.sh` etc.
-      }
+      // Direct process name: posix `claude`, win `claude.exe / claude.cmd / claude.ps1`.
+      if (CLAUDE_NAME_RE.test(entry.name)) return pid;
+      // npm-global install: process is `node.exe` and cmdline points at the
+      // package script. Matching the package path is precise and avoids the
+      // `claude-pay-attention.sh` false positive `\bclaude\b` would have hit.
+      if (entry.cmd && CLAUDE_CMDLINE_RE.test(entry.cmd)) return pid;
     }
     return null;
   }
@@ -184,7 +193,15 @@ export class Detector {
         /* fall through */
       }
     }
-    // Windows or fallback: try latest mtime jsonl across ~/.claude/projects to
+    if (process.platform === 'win32') {
+      // Windows has no per-pid cwd readable from userland. The pointer file
+      // (`~/.claude/sessions/<pid>.json`) is the authoritative source on 2.1.x;
+      // returning null here keeps the panel honest (idle) rather than
+      // reverse-deriving a wrong cwd from `cwdFromProjectDirLeaf`, whose
+      // `'-' → '/'` substitution corrupts Windows paths like `D-dum-dev-termcat`.
+      return null;
+    }
+    // POSIX fallback: latest mtime jsonl across ~/.claude/projects to
     // reverse-derive cwd.
     const { leaf } = await this.latestJsonlGlobal();
     return leaf ? cwdFromProjectDirLeaf(leaf) : null;
@@ -341,29 +358,29 @@ async function listProcessesUnix(): Promise<ProcessRow[]> {
 }
 
 async function listProcessesWindows(): Promise<ProcessRow[]> {
-  // wmic is legacy-but-ubiquitous; output format is CSV-ish with blank lines.
+  // PowerShell + CIM gives us CommandLine reliably (wmic CSV breaks on commas
+  // inside command lines) and survives wmic's deprecation on Windows 11 22H2+.
+  const psCommand =
+    'Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine | ConvertTo-Json -Compress';
   const { stdout } = await execFileAsync(
-    'wmic',
-    ['process', 'get', 'ProcessId,ParentProcessId,Name', '/format:csv'],
-    { maxBuffer: 8 * 1024 * 1024, timeout: 3000 },
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-Command', psCommand],
+    { maxBuffer: 16 * 1024 * 1024, timeout: 5000 },
   );
+  const trimmed = stdout.trim();
+  if (!trimmed) return [];
+  const parsed = JSON.parse(trimmed) as unknown;
+  const items = Array.isArray(parsed) ? parsed : [parsed];
   const rows: ProcessRow[] = [];
-  const lines = stdout.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  // First line is header like: Node,Name,ParentProcessId,ProcessId
-  const [headerLine, ...bodyLines] = lines;
-  if (!headerLine) return rows;
-  const headers = headerLine.split(',').map((h) => h.trim().toLowerCase());
-  const idxName = headers.indexOf('name');
-  const idxPpid = headers.indexOf('parentprocessid');
-  const idxPid = headers.indexOf('processid');
-  if (idxName < 0 || idxPpid < 0 || idxPid < 0) return rows;
-  for (const line of bodyLines) {
-    const cols = line.split(',');
-    const pid = Number(cols[idxPid]);
-    const ppid = Number(cols[idxPpid]);
-    const name = (cols[idxName] ?? '').trim();
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as { ProcessId?: unknown; ParentProcessId?: unknown; Name?: unknown; CommandLine?: unknown };
+    const pid = Number(obj.ProcessId);
+    const ppid = Number(obj.ParentProcessId);
     if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
-    rows.push({ pid, ppid, name });
+    const name = typeof obj.Name === 'string' ? obj.Name : '';
+    const cmd = typeof obj.CommandLine === 'string' && obj.CommandLine.length > 0 ? obj.CommandLine : undefined;
+    rows.push({ pid, ppid, name, cmd });
   }
   return rows;
 }

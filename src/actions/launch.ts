@@ -1,8 +1,13 @@
 import type { PtyInjector } from './pty-inject';
 
-/** Build the shell command used to launch claude with the plugin's active.env. */
+/** Build the shell command used to launch claude with the plugin's active env file. */
 export function buildLaunchCommand(envPath: string): string {
-  // Single-quote the path to tolerate spaces / unicode.
+  if (process.platform === 'win32') {
+    // PowerShell dot-source. Single-quote the path; embedded ' becomes ''.
+    const quoted = "'" + envPath.replaceAll("'", "''") + "'";
+    return `. ${quoted}; claude`;
+  }
+  // POSIX bash/zsh.
   const quoted = "'" + envPath.replaceAll("'", "'\\''") + "'";
   return `set -a; source ${quoted}; set +a; claude`;
 }
