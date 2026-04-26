@@ -14,6 +14,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Opt into Node.js 24 for actions still bundled with Node 20 runtime
+  # (actions/checkout@v4, actions/setup-node@v4). Removes the deprecation warning.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -35,17 +40,18 @@ jobs:
         id: resolve
         shell: bash
         run: |
-          PKG_VERSION=$(node -p "require('./package.json').version")
+          # On tag push: tag is source of truth — sync package.json to it so
+          # the published artifact carries the correct version even if the
+          # repo's package.json wasn't bumped before tagging.
           if [ "${{ github.event_name }}" = "push" ]; then
-            TAG_VERSION="${GITHUB_REF_NAME#v}"
-            if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
-              echo "::error::package.json version ($PKG_VERSION) does not match tag ($TAG_VERSION). Bump package.json and retag."
-              exit 1
-            fi
+            VERSION="${GITHUB_REF_NAME#v}"
+            node -e "const fs=require('fs'),p='./package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
+          else
+            VERSION=$(node -p "require('./package.json').version")
           fi
-          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
-          echo "tgz=claude-code-power-${PKG_VERSION}.tgz" >> "$GITHUB_OUTPUT"
-          echo "Using version: $PKG_VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tgz=claude-code-power-${VERSION}.tgz" >> "$GITHUB_OUTPUT"
+          echo "Using version: $VERSION"
 
       - name: Build
         run: npm run build
