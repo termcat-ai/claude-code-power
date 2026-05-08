@@ -68,6 +68,16 @@ export class JsonlWatcher {
   }
 
   private start(): void {
+    // chokidar (fsevents on macOS, inotify on Linux) silently no-ops when its
+    // target path didn't exist at watch time. When claude is launched in a
+    // brand-new project, ~/.claude/projects/<encoded>/ doesn't exist yet, so
+    // without this mkdir the watcher would never fire and the panel would
+    // freeze on whatever the one-shot seed parse captured.
+    try {
+      fs.mkdirSync(this.projectDir, { recursive: true });
+    } catch {
+      /* non-fatal — chokidar will surface a real error via 'error' if any */
+    }
     this.watcher = chokidar.watch(path.join(this.projectDir, '*.jsonl'), {
       persistent: true,
       ignoreInitial: false,
