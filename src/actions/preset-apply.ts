@@ -30,6 +30,8 @@ export interface PresetApplyDeps {
   showConfirm: (message: string) => Promise<boolean>;
   messageNextLaunch: (name: string) => string;
   messageRestartPrompt: string;
+  /** If the capture proxy is active, returns its local URL; otherwise null. */
+  getProxyOverrideUrl: () => string | null;
 }
 
 export async function applyPreset(presetId: string, deps: PresetApplyDeps): Promise<void> {
@@ -38,7 +40,8 @@ export async function applyPreset(presetId: string, deps: PresetApplyDeps): Prom
 
   const current = deps.presetStore.getActive();
   await deps.presetStore.setActive(target.id);
-  await deps.presetStore.writeActiveEnv(target);
+  const proxyUrl = deps.getProxyOverrideUrl();
+  await deps.presetStore.writeActiveEnv(target, proxyUrl ? { overrideBaseUrl: proxyUrl } : undefined);
   deps.store.setActivePresetId(target.id);
 
   const activeSid = deps.store.getState().activeTabSessionId;

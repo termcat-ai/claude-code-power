@@ -34,6 +34,8 @@ export interface LayoutInput {
   presets: Preset[];
   activePresetId: string | null;
   claudeInstalled: boolean;
+  /** Port the local capture proxy is listening on, or null if disabled. */
+  proxyPort: number | null;
 }
 
 // Label lookup for a PermissionMode. `bypassPermissions` is included so the
@@ -96,7 +98,7 @@ function formatSessionLabel(s: SessionMeta): string {
  * stays visually separated from the mode text.
  */
 function compactControlsSection(input: LayoutInput): SectionDescriptor {
-  const { t, sessions, selectedSessionFile, liveSessionFile, state, activeTab, driveModeEffective, presets, activePresetId } = input;
+  const { t, sessions, selectedSessionFile, liveSessionFile, state, activeTab, driveModeEffective, presets, activePresetId, proxyPort } = input;
 
   const sessionEffective = selectedSessionFile ?? liveSessionFile ?? sessions[0]?.filePath ?? '';
   const sessionOptions = sessions.length
@@ -157,9 +159,29 @@ function compactControlsSection(input: LayoutInput): SectionDescriptor {
           value: sessionEffective,
           options: sessionOptions,
         },
+        {
+          id: 'proxy',
+          type: 'text',
+          label: t.proxyLabel,
+          value: proxyPort !== null ? `${t.proxyEnabledHint} · :${proxyPort}` : t.proxyDisabledHint,
+          disabled: true,
+          trailingActions: [
+            {
+              id: 'toggleProxy',
+              icon: proxyPort !== null ? 'square' : 'play',
+              tooltip: proxyPort !== null ? t.proxyStopTooltip : t.proxyStartTooltip,
+            },
+          ],
+        },
       ],
     },
   };
+}
+
+/** Format a token count: < 1000 → as-is; ≥ 1000 → "1.2k". */
+function fmtTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(n);
 }
 
 /**
@@ -179,6 +201,9 @@ function statsInlineBadges(
   if (stats.skills.length > 0) out.push({ icon: 'sparkles', text: String(stats.skills.length), color: 'primary' });
   if (stats.mcpServers.length > 0) out.push({ icon: 'plug', text: String(stats.mcpServers.length), color: 'warning' });
   if (stats.taskCount > 0) out.push({ icon: 'bot', text: String(stats.taskCount), color: 'muted' });
+  if (stats.inputTokens > 0) out.push({ icon: 'arrow-up', text: fmtTokens(stats.inputTokens), color: 'muted' });
+  if (stats.outputTokens > 0) out.push({ icon: 'arrow-down', text: fmtTokens(stats.outputTokens), color: 'muted' });
+  if (stats.cacheReadTokens > 0) out.push({ icon: 'database', text: fmtTokens(stats.cacheReadTokens), color: 'info' });
   return out;
 }
 
@@ -224,6 +249,13 @@ function summarizeToolUse(tu: ToolUse): string {
 
 function buildItemTooltip(turn: PromptTurn, stats: PromptTurnStats, t: Locale): string | undefined {
   const lines: string[] = [];
+
+  // Token usage
+  if (stats.inputTokens > 0 || stats.outputTokens > 0) {
+    const cacheHit = stats.cacheReadTokens > 0 ? `  ${t.tokenCacheLabel}: ${stats.cacheReadTokens.toLocaleString()}` : '';
+    lines.push(`${t.tokenInLabel}: ${stats.inputTokens.toLocaleString()}  ${t.tokenOutLabel}: ${stats.outputTokens.toLocaleString()}${cacheHit}`);
+    lines.push('');
+  }
 
   // Skills
   lines.push(`${t.detailSkillsTitle} (${stats.skills.length}):`);
@@ -301,7 +333,7 @@ function turnSections(
           id: String(turn.index),
           label: `#${turn.index}  ${preview || '(empty prompt)'}`,
           inlineBadges: statsInlineBadges(stats, fileReadCount, fileWriteCount),
-          tooltip: fullPrompt,
+          tooltip: buildItemTooltip(turn, stats, t) ?? fullPrompt,
           leadingAction: {
             id: 'toggleExpand',
             icon: expanded ? 'chevron-down' : 'chevron-right',
@@ -309,6 +341,7 @@ function turnSections(
           },
           actions: (() => {
             const acts: Array<{ id: string; icon: string; tooltip: string }> = [
+              { id: 'viewRaw', icon: 'code', tooltip: t.viewRawTooltip },
               { id: 'gotoTurn', icon: 'arrow-right', tooltip: t.gotoTurnTooltip },
             ];
             if (canUndo) acts.push({ id: 'undo', icon: 'rotate-ccw', tooltip: t.undoButtonTooltip });

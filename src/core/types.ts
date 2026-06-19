@@ -35,6 +35,8 @@ export interface PendingDrive {
 export interface AppState {
   stage: Stage;
   activeTabSessionId: string | null;
+  /** Whether the local capture proxy is running. */
+  proxyEnabled: boolean;
   perTabStates: Map<string, PerTabState>;
   pendingDrive: Map<string, PendingDrive>;
   activePresetId: string | null;
@@ -58,6 +60,7 @@ export function initialAppState(): AppState {
   return {
     stage: 'NoPreset',
     activeTabSessionId: null,
+    proxyEnabled: false,
     perTabStates: new Map(),
     pendingDrive: new Map(),
     activePresetId: null,

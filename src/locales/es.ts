@@ -75,6 +75,9 @@ export const es: LocaleKeys = {
   toolCountSummary: '{count} llamada(s) a herramienta',
   expandTooltip: 'Expandir',
   gotoTurnTooltip: 'Ir a los detalles de la llamada y enfocar este prompt',
+  viewRawTooltip: 'Ver JSON de solicitud / respuesta en bruto',
+  rawTabRequest: 'Solicitud (上行)',
+  rawTabResponse: 'Respuesta (下行)',
 
   // Call details
   contextSectionTitle: 'Contexto cargado',
@@ -82,6 +85,20 @@ export const es: LocaleKeys = {
   badgeMcp: 'MCP',
   badgeAgent: 'Agent',
   clickToViewFileContent: 'Haz clic para ver el contenido del archivo',
+
+  // Token usage badges
+  tokenInLabel: 'Tokens de entrada',
+  tokenOutLabel: 'Tokens de salida',
+  tokenCacheLabel: 'Caché leída',
+
+  // Capture proxy
+  proxyLabel: 'Proxy captura',
+  proxyEnabledHint: 'Activo',
+  proxyDisabledHint: 'Apagado',
+  proxyStartTooltip: 'Iniciar proxy local para capturar solicitudes completas',
+  proxyStopTooltip: 'Detener proxy de captura',
+  proxyStarted: 'Proxy iniciado (:{port}) — reinicia claude para que surta efecto',
+  proxyStopped: 'Proxy detenido',
 
   // Turn detail panel
   detailBackButton: '← Volver a la lista',

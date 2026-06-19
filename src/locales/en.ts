@@ -75,6 +75,9 @@ export const en: LocaleKeys = {
   toolCountSummary: '{count} tool call(s)',
   expandTooltip: 'Expand',
   gotoTurnTooltip: 'Jump to call details and focus this prompt',
+  viewRawTooltip: 'View raw request / response JSON',
+  rawTabRequest: 'Request (上行)',
+  rawTabResponse: 'Response (下行)',
 
   // Call details
   contextSectionTitle: 'Loaded context',
@@ -82,6 +85,20 @@ export const en: LocaleKeys = {
   badgeMcp: 'MCP',
   badgeAgent: 'Agent',
   clickToViewFileContent: 'Click to view file contents',
+
+  // Token usage badges
+  tokenInLabel: 'Input Tokens',
+  tokenOutLabel: 'Output Tokens',
+  tokenCacheLabel: 'Cache Hit',
+
+  // Capture proxy
+  proxyLabel: 'Capture Proxy',
+  proxyEnabledHint: 'Active',
+  proxyDisabledHint: 'Off',
+  proxyStartTooltip: 'Start local proxy to capture full requests',
+  proxyStopTooltip: 'Stop capture proxy',
+  proxyStarted: 'Proxy started (:{port}) — restart claude to take effect',
+  proxyStopped: 'Proxy stopped',
 
   // Turn detail panel
   detailBackButton: '← Back to list',

@@ -16,11 +16,13 @@ import { PtyInjector } from './actions/pty-inject';
 import { PresetStore } from './actions/preset-store';
 import { reapPendingDriveTimeouts } from './actions/drive-mode';
 import { injectLaunchCommand } from './actions/launch';
-import type { PermissionMode, PromptTurn } from './data/types';
+import type { PermissionMode, PromptTurn, NormalizedEvent } from './data/types';
 import { buildPanelSections } from './ui/panel-layout';
 import { handlePanelEvent } from './ui/event-handlers';
 import { computeTurnStats, extractToolFilePath, type PromptTurnStats } from './data/types';
 import type { SessionMeta } from './core/types';
+import { CaptureStore } from './proxy/capture-store';
+import { ProxyServer } from './proxy/proxy-server';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -69,7 +71,13 @@ interface HostAPI {
     showNotification(message: string, type?: 'info' | 'success' | 'warning' | 'error'): void;
     showConfirm(message: string, options?: { confirmText?: string; cancelText?: string }): Promise<boolean>;
     showInputBox(options: { title?: string; placeholder?: string; value?: string; password?: boolean }): Promise<string | undefined>;
-    showMessage(options: { title?: string; content: string; format?: 'plain' | 'pre' | 'code'; closeText?: string }): Promise<void>;
+    showMessage(options: {
+      title?: string;
+      content?: string;
+      format?: 'plain' | 'pre' | 'code';
+      tabs?: Array<{ label: string; content: string; format?: 'plain' | 'pre' | 'code' }>;
+      closeText?: string;
+    }): Promise<void>;
     showForm(options: {
       title?: string;
       description?: string;
@@ -128,6 +136,9 @@ let detector: Detector;
 let injector: PtyInjector;
 let pluginLogger: PluginContext['logger'];
 
+let captureStore: CaptureStore;
+let proxyServer: ProxyServer;
+
 let uiRefreshTimer: NodeJS.Timeout | null = null;
 let driveReapTimer: NodeJS.Timeout | null = null;
 let defaultPermissionMode: PermissionMode = 'default';
@@ -164,6 +175,11 @@ export async function activate(context: PluginContext): Promise<void> {
   store = new Store();
   presetStore = new PresetStore();
   settingsReader = new SettingsReader();
+  captureStore = new CaptureStore();
+  proxyServer = new ProxyServer(captureStore, () => {
+    const active = presetStore.getActive();
+    return active?.baseUrl || 'https://api.anthropic.com';
+  });
 
   // Load presets + default permission mode.
   await presetStore.load();
@@ -315,6 +331,19 @@ export async function activate(context: PluginContext): Promise<void> {
         for (const w of watchers.values()) w.release();
         watchers.clear();
         indices.clear();
+      },
+    },
+    {
+      dispose: () => {
+        if (proxyServer.getPort() !== null) {
+          // Best-effort: restore active.env without proxy override.
+          const active = presetStore.getActive();
+          if (active) {
+            presetStore.writeActiveEnv(active).catch(() => {});
+          }
+          proxyServer.stop().catch(() => {});
+          store.setProxyEnabled(false);
+        }
       },
     },
   );
@@ -489,6 +518,7 @@ function pushPanelData(): void {
     presets: presetStore.list(),
     activePresetId: presetStore.getActive()?.id ?? null,
     claudeInstalled: true,
+    proxyPort: proxyServer.getPort(),
   });
   api.ui.setPanelData(PANEL_ID, sections);
 }
@@ -557,6 +587,127 @@ function readSyncSafe(filePath: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Raw turn data builder (for "view raw" modal)
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-read the JSONL and reconstruct the messages array up to turn N plus
+ * the raw API responses for that turn. Returns a pretty-printed JSON string
+ * suitable for showMessage({ format: 'pre' }).
+ *
+ * Note: Claude Code's system prompt and tool-definitions are never written
+ * to the JSONL, so they cannot be included here.
+ */
+type RawTab = { label: string; content: string; format: 'pre' };
+
+function getRawTurnParts(turnIndex: number, sessionFilePath: string): RawTab[] {
+  const err = (msg: string): RawTab[] => [{ label: 'Error', content: msg, format: 'pre' }];
+
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { parseJsonlLine } = require('./data/jsonl-parser') as typeof import('./data/jsonl-parser');
+
+  const rawText = readSyncSafe(sessionFilePath);
+  if (!rawText) return err('Error: could not read session file');
+
+  const rawByUuid = new Map<string, Record<string, unknown>>();
+  for (const line of rawText.split('\n')) {
+    const r = parseJsonlLine(line);
+    if (r && typeof r.uuid === 'string') rawByUuid.set(r.uuid, r);
+  }
+
+  const idx = indices.get(sessionFilePath);
+  if (!idx) return err('Error: session not indexed');
+
+  const turns = idx.getPromptTurns();
+  const turn = turns.find((t) => t.index === turnIndex);
+  if (!turn) return err(`Error: turn ${turnIndex} not found`);
+
+  const lastAsstUuid = turn.assistantEvents[turn.assistantEvents.length - 1]?.uuid ?? null;
+  const stopUuid = lastAsstUuid ?? turn.userEvent.uuid;
+
+  const messages: Array<Record<string, unknown>> = [];
+  for (const e of idx.getMainBranch()) {
+    const raw = rawByUuid.get(e.uuid);
+    if (!raw) continue;
+    const topType = raw.type;
+    if (topType === 'user' && !raw.isMeta) {
+      const msg = raw.message as Record<string, unknown> | undefined;
+      if (msg) messages.push({ role: 'user', content: msg.content });
+    } else if (topType === 'assistant') {
+      const msg = raw.message as Record<string, unknown> | undefined;
+      if (msg) {
+        messages.push({
+          role: 'assistant',
+          model: msg.model,
+          content: msg.content,
+          stop_reason: msg.stop_reason,
+          usage: msg.usage,
+        });
+      }
+    }
+    if (e.uuid === stopUuid) break;
+  }
+
+  const apiResponses = turn.assistantEvents
+    .map((ae) => rawByUuid.get(ae.uuid)?.message)
+    .filter(Boolean);
+
+  // Prefer proxy capture data (includes system prompt + tool definitions).
+  // A single user turn may trigger multiple API calls (tool-use rounds), so
+  // collect ALL captures in the window [userTs-5s, lastAsstTs+30s] and show
+  // each one as a numbered section.
+  const userTs = turn.userEvent.ts ?? 0;
+  const lastAsstTs = turn.assistantEvents[turn.assistantEvents.length - 1]?.ts ?? userTs;
+  const captures = captureStore
+    .getByTimeRange(userTs - 5_000, lastAsstTs + 30_000)
+    .sort((a, b) => a.captureTs - b.captureTs);
+
+  if (captures.length > 0) {
+    try {
+      const SEP = '━'.repeat(60);
+      // Multiple calls → one tab per call; single call → two tabs (上行 / 下行).
+      if (captures.length === 1) {
+        const c = captures[0];
+        const ts = new Date(c.captureTs).toISOString();
+        const upstreamNote = `# ${ts}  upstream: ${c.upstreamUrl}\n\n`;
+        return [
+          { label: t().rawTabRequest, content: upstreamNote + JSON.stringify(c.request, null, 2), format: 'pre' },
+          { label: t().rawTabResponse, content: c.rawResponseSse ?? '(not yet captured)', format: 'pre' },
+        ];
+      }
+      return captures.map((c, i) => {
+        const ts = new Date(c.captureTs).toISOString();
+        const req = JSON.stringify(c.request, null, 2);
+        const resp = c.rawResponseSse ?? '(not yet captured)';
+        const content = [
+          `# ${ts}  upstream: ${c.upstreamUrl}`,
+          '',
+          `${SEP} 上行（REQUEST）${'━'.repeat(Math.max(0, 60 - 10))}`,
+          '',
+          req,
+          '',
+          `${SEP} 下行（RESPONSE）${'━'.repeat(Math.max(0, 60 - 11))}`,
+          '',
+          resp,
+        ].join('\n');
+        return { label: `调用 ${i + 1}`, content, format: 'pre' as const };
+      });
+    } catch { /* fall through to JSONL path */ }
+  }
+
+  // Fallback: JSONL reconstruction (no system prompt / tool defs).
+  try {
+    const note = '# JSONL reconstruction — system prompt and tool definitions not stored\n# Enable the capture proxy to see the full request.\n\n';
+    return [
+      { label: t().rawTabRequest, content: note + JSON.stringify(messages, null, 2), format: 'pre' as const },
+      { label: t().rawTabResponse, content: JSON.stringify(apiResponses, null, 2), format: 'pre' as const },
+    ];
+  } catch {
+    return err('Error: failed to serialize raw data');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Shared handler deps
 // ---------------------------------------------------------------------------
 function buildHandlerDeps() {
@@ -612,6 +763,16 @@ function buildHandlerDeps() {
       if (!turn) return null;
       return `user-${turn.userEvent.uuid}`;
     },
+    openRawTurnModal: async (turnIndex: number) => {
+      const activeSid = store.getState().activeTabSessionId;
+      const sessionFile = activeSid ? selectedSessionFileForTab(activeSid) : null;
+      if (!sessionFile) {
+        api.ui.showNotification(t().terminalNotFound, 'warning');
+        return;
+      }
+      const tabs = getRawTurnParts(turnIndex, sessionFile);
+      await api.ui.showMessage({ title: `Turn #${turnIndex} — Raw`, tabs });
+    },
     getToolFilePath: (turnIndex: number, toolIndex: number) => {
       const activeSid = store.getState().activeTabSessionId;
       if (!activeSid) return null;
@@ -652,6 +813,36 @@ function buildHandlerDeps() {
         api.ui.showNotification(msg, type),
       messageNextLaunch: (name: string) => fmt(t().presetActivatedNextLaunch, { name }),
       messageRestartPrompt: t().confirmRestartForPreset,
+      getProxyOverrideUrl: () => {
+        const port = proxyServer.getPort();
+        return port !== null ? `http://127.0.0.1:${port}` : null;
+      },
+    },
+    toggleProxy: async (enable: boolean) => {
+      if (enable) {
+        try {
+          const port = await proxyServer.start();
+          const proxyUrl = `http://127.0.0.1:${port}`;
+          const active = presetStore.getActive();
+          if (active) {
+            await presetStore.writeActiveEnv(active, { overrideBaseUrl: proxyUrl });
+          }
+          store.setProxyEnabled(true);
+          scheduleUiRefresh();
+          api.ui.showNotification(fmt(t().proxyStarted, { port }), 'success');
+        } catch (err) {
+          api.ui.showNotification(`Proxy start failed: ${String(err)}`, 'error');
+        }
+      } else {
+        await proxyServer.stop();
+        const active = presetStore.getActive();
+        if (active) {
+          await presetStore.writeActiveEnv(active);
+        }
+        store.setProxyEnabled(false);
+        scheduleUiRefresh();
+        api.ui.showNotification(t().proxyStopped, 'info');
+      }
     },
   };
 }

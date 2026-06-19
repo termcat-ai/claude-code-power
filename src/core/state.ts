@@ -26,6 +26,12 @@ export class Store {
     return this.state;
   }
 
+  setProxyEnabled(enabled: boolean): void {
+    if (this.state.proxyEnabled === enabled) return;
+    this.state.proxyEnabled = enabled;
+    this.bus.emit('state:proxy-change', enabled);
+  }
+
   setStage(stage: AppState['stage']): void {
     if (this.state.stage === stage) return;
     this.state.stage = stage;

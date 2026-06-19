@@ -138,8 +138,12 @@ export interface HandlersDeps {
   getToolFilePath: (turnIndex: number, toolIndex: number) => string | null;
   /** Read file + open a modal viewer. */
   openRuleFileModal: (filePath: string) => Promise<void>;
+  /** Open raw turn JSON (messages + api response) in a modal viewer. */
+  openRawTurnModal: (turnIndex: number) => Promise<void>;
   /** Return the msg-viewer block id (e.g. "user-<uuid>") for a given turn index. */
   getUserBlockIdForTurn: (turnIndex: number) => string | null;
+  /** Start or stop the local capture proxy. */
+  toggleProxy: (enable: boolean) => Promise<void>;
 }
 
 /**
@@ -171,6 +175,22 @@ export async function handlePanelEvent(
     if (!sid) return;
     deps.store.toggleExpandedTurn(sid, target);
     deps.onPresetChanged();
+    return;
+  }
+
+  // "View raw" button on a turn header.
+  if (eventId === 'viewRaw') {
+    const p = payload as { itemId?: string } | undefined;
+    const target = p?.itemId ? Number(p.itemId) : NaN;
+    if (!Number.isFinite(target) || target <= 0) return;
+    await deps.openRawTurnModal(target);
+    return;
+  }
+
+  // Proxy capture toggle — fired from the trailing action button on the proxy row.
+  if (eventId === 'toggleProxy') {
+    const current = deps.store.getState().proxyEnabled;
+    await deps.toggleProxy(!current);
     return;
   }
 

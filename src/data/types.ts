@@ -32,6 +32,14 @@ export type NormalizedEvent =
       ts: number;
       text: string;
       toolUses: ToolUse[];
+      /**
+       * Total input tokens = raw + cache_creation + cache_read.
+       * Represents full context size sent to the model this API call.
+       */
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
     }
   | {
       kind: 'attachment';
@@ -87,6 +95,17 @@ export interface PromptTurnStats {
   skillInfos: SkillInfo[];
   /** Distinct MCP server names used (e.g. 'context7'). */
   mcpServers: string[];
+  /**
+   * Input tokens from the last assistant API call (represents context size at
+   * end of turn). 0 if unavailable (older JSONL without usage field).
+   */
+  inputTokens: number;
+  /** Sum of output tokens across all assistant API calls in the turn. */
+  outputTokens: number;
+  /** Sum of cache-read input tokens across all assistant API calls. */
+  cacheReadTokens: number;
+  /** Sum of cache-write (cache_creation) input tokens across all assistant API calls. */
+  cacheWriteTokens: number;
 }
 
 /** Session-wide context — rule files / skills loaded at session start via hooks. */
@@ -111,12 +130,27 @@ export function computeTurnStats(
     skills: [],
     skillInfos: [],
     mcpServers: [],
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
   };
   const skillSet = new Set<string>();
   const skillInfoMap = new Map<string, SkillInfo>();
   const mcpSet = new Set<string>();
 
   for (const msg of turn.assistantEvents) {
+    // Within a turn there can be multiple API calls (tool_use rounds).
+    // inputTokens / cacheReadTokens / cacheWriteTokens: take the LAST event's
+    // values — each subsequent call includes the full prior context, so the
+    // last call's numbers already represent the total context window.
+    // outputTokens: sum across all calls (each call generates fresh tokens).
+    if (msg.inputTokens !== undefined) stats.inputTokens = msg.inputTokens;
+    if (msg.cacheReadTokens !== undefined) stats.cacheReadTokens = msg.cacheReadTokens;
+    if ((msg as { cacheWriteTokens?: number }).cacheWriteTokens !== undefined) {
+      stats.cacheWriteTokens = (msg as { cacheWriteTokens?: number }).cacheWriteTokens!;
+    }
+    stats.outputTokens += msg.outputTokens ?? 0;
     for (const tu of msg.toolUses) {
       stats.totalToolUses++;
       switch (tu.kind) {

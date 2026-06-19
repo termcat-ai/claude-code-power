@@ -133,6 +133,22 @@ function cleanCommandWrappers(text: string): string {
     .trim();
 }
 
+function extractUsage(message: unknown): { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } {
+  const none = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  if (!message || typeof message !== 'object') return none;
+  const usage = (message as { usage?: unknown }).usage;
+  if (!usage || typeof usage !== 'object') return none;
+  const u = usage as Record<string, unknown>;
+  const num = (k: string) => (typeof u[k] === 'number' ? (u[k] as number) : 0);
+  return {
+    // inputTokens = raw (uncached) + cache_creation + cache_read → total context sent
+    inputTokens: num('input_tokens') + num('cache_creation_input_tokens') + num('cache_read_input_tokens'),
+    outputTokens: num('output_tokens'),
+    cacheReadTokens: num('cache_read_input_tokens'),
+    cacheWriteTokens: num('cache_creation_input_tokens'),
+  };
+}
+
 function extractPermissionMode(rec: RawRecord): PermissionMode | null {
   const v = rec.permissionMode;
   if (v === 'default' || v === 'acceptEdits' || v === 'plan' || v === 'bypassPermissions') return v;
@@ -211,6 +227,7 @@ export function normalizeRecord(rec: RawRecord): NormalizedEvent | null {
   }
 
   if (topType === 'assistant') {
+    const usage = extractUsage(rec.message);
     return {
       kind: 'assistant-msg',
       uuid,
@@ -218,6 +235,10 @@ export function normalizeRecord(rec: RawRecord): NormalizedEvent | null {
       ts,
       text: extractAssistantText(rec.message),
       toolUses: extractToolUses(rec.message),
+      inputTokens: usage.inputTokens || undefined,
+      outputTokens: usage.outputTokens || undefined,
+      cacheReadTokens: usage.cacheReadTokens || undefined,
+      cacheWriteTokens: usage.cacheWriteTokens || undefined,
     };
   }
 

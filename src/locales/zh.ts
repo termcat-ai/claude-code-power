@@ -73,6 +73,9 @@ export const zh = {
   toolCountSummary: '{count} 次工具',
   expandTooltip: '展开',
   gotoTurnTooltip: '跳转到调用详情并定位该提问',
+  viewRawTooltip: '查看原始请求 / 响应 JSON',
+  rawTabRequest: '上行（REQUEST）',
+  rawTabResponse: '下行（RESPONSE）',
 
   // Call details
   contextSectionTitle: '加载的上下文',
@@ -80,6 +83,20 @@ export const zh = {
   badgeMcp: 'MCP',
   badgeAgent: 'Agent',
   clickToViewFileContent: '点击查看文件内容',
+
+  // Token usage badges
+  tokenInLabel: '上行 Token',
+  tokenOutLabel: '下行 Token',
+  tokenCacheLabel: '缓存命中',
+
+  // Capture proxy
+  proxyLabel: '请求捕获',
+  proxyEnabledHint: '捕获中',
+  proxyDisabledHint: '已关闭',
+  proxyStartTooltip: '启动本地代理捕获完整请求',
+  proxyStopTooltip: '停止代理捕获',
+  proxyStarted: '代理已启动（:{port}），下次启动 claude 后生效',
+  proxyStopped: '代理已停止',
 
   // Turn detail panel
   detailBackButton: '← 返回列表',
