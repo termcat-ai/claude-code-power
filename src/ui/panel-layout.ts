@@ -53,7 +53,7 @@ function driveModeLabel(mode: PermissionMode, t: Locale): string {
 }
 
 function headerSection(input: LayoutInput): SectionDescriptor {
-  const { t, activeTab } = input;
+  const { t, activeTab, proxyPort } = input;
   // Keep only a short basename of cwd to avoid wrapping the title.
   const cwd = activeTab?.detectedCwd ?? '';
   const cwdShort = cwd ? cwd.split('/').filter(Boolean).slice(-2).join('/') : '';
@@ -64,6 +64,14 @@ function headerSection(input: LayoutInput): SectionDescriptor {
     stale: { text: '~', color: 'warning' },
   };
   const badge = activeTab ? badgeByStatus[activeTab.status] : undefined;
+  const proxyAction = {
+    id: 'toggleProxy',
+    icon: 'plug',
+    color: proxyPort !== null ? ('success' as const) : undefined,
+    tooltip: proxyPort !== null
+      ? `${t.proxyEnabledHint} :${proxyPort} — ${t.proxyStopTooltip}`
+      : t.proxyStartTooltip,
+  };
   return {
     id: 'header',
     template: 'header',
@@ -73,6 +81,7 @@ function headerSection(input: LayoutInput): SectionDescriptor {
       icon: 'sparkles',
       badge,
       actions: [
+        proxyAction,
         { id: 'launchClaude', icon: 'play', tooltip: t.launchClaudeButton },
       ],
     },
@@ -98,7 +107,7 @@ function formatSessionLabel(s: SessionMeta): string {
  * stays visually separated from the mode text.
  */
 function compactControlsSection(input: LayoutInput): SectionDescriptor {
-  const { t, sessions, selectedSessionFile, liveSessionFile, state, activeTab, driveModeEffective, presets, activePresetId, proxyPort } = input;
+  const { t, sessions, selectedSessionFile, liveSessionFile, state, activeTab, driveModeEffective, presets, activePresetId } = input;
 
   const sessionEffective = selectedSessionFile ?? liveSessionFile ?? sessions[0]?.filePath ?? '';
   const sessionOptions = sessions.length
@@ -159,20 +168,6 @@ function compactControlsSection(input: LayoutInput): SectionDescriptor {
           value: sessionEffective,
           options: sessionOptions,
         },
-        {
-          id: 'proxy',
-          type: 'text',
-          label: t.proxyLabel,
-          value: proxyPort !== null ? `${t.proxyEnabledHint} · :${proxyPort}` : t.proxyDisabledHint,
-          disabled: true,
-          trailingActions: [
-            {
-              id: 'toggleProxy',
-              icon: proxyPort !== null ? 'square' : 'play',
-              tooltip: proxyPort !== null ? t.proxyStopTooltip : t.proxyStartTooltip,
-            },
-          ],
-        },
       ],
     },
   };
@@ -193,17 +188,27 @@ function statsInlineBadges(
   stats: PromptTurnStats,
   fileReadCount: number,
   fileWriteCount: number,
-): Array<{ icon: string; text: string; color: string }> {
-  const out: Array<{ icon: string; text: string; color: string }> = [];
+  t: Locale,
+): Array<{ icon: string; text: string; color: string; tooltip?: string }> {
+  const out: Array<{ icon: string; text: string; color: string; tooltip?: string }> = [];
   if (stats.totalToolUses > 0) out.push({ icon: 'wrench', text: String(stats.totalToolUses), color: 'muted' });
   if (fileReadCount > 0) out.push({ icon: 'file-text', text: String(fileReadCount), color: 'info' });
   if (fileWriteCount > 0) out.push({ icon: 'file-pen', text: String(fileWriteCount), color: 'success' });
   if (stats.skills.length > 0) out.push({ icon: 'sparkles', text: String(stats.skills.length), color: 'primary' });
   if (stats.mcpServers.length > 0) out.push({ icon: 'plug', text: String(stats.mcpServers.length), color: 'warning' });
   if (stats.taskCount > 0) out.push({ icon: 'bot', text: String(stats.taskCount), color: 'muted' });
-  if (stats.inputTokens > 0) out.push({ icon: 'arrow-up', text: fmtTokens(stats.inputTokens), color: 'muted' });
-  if (stats.outputTokens > 0) out.push({ icon: 'arrow-down', text: fmtTokens(stats.outputTokens), color: 'muted' });
-  if (stats.cacheReadTokens > 0) out.push({ icon: 'database', text: fmtTokens(stats.cacheReadTokens), color: 'info' });
+  if (stats.inputTokens > 0) out.push({
+    icon: 'arrow-up', text: fmtTokens(stats.inputTokens), color: 'muted',
+    tooltip: t.tokenInTooltip,
+  });
+  if (stats.outputTokens > 0) out.push({
+    icon: 'arrow-down', text: fmtTokens(stats.outputTokens), color: 'muted',
+    tooltip: t.tokenOutTooltip,
+  });
+  if (stats.cacheReadTokens > 0) out.push({
+    icon: 'database', text: fmtTokens(stats.cacheReadTokens), color: 'info',
+    tooltip: t.tokenCacheTooltip,
+  });
   return out;
 }
 
@@ -332,7 +337,7 @@ function turnSections(
         {
           id: String(turn.index),
           label: `#${turn.index}  ${preview || '(empty prompt)'}`,
-          inlineBadges: statsInlineBadges(stats, fileReadCount, fileWriteCount),
+          inlineBadges: statsInlineBadges(stats, fileReadCount, fileWriteCount, t),
           tooltip: buildItemTooltip(turn, stats, t) ?? fullPrompt,
           leadingAction: {
             id: 'toggleExpand',

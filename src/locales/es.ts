@@ -78,6 +78,8 @@ export const es: LocaleKeys = {
   viewRawTooltip: 'Ver JSON de solicitud / respuesta en bruto',
   rawTabRequest: 'Solicitud (上行)',
   rawTabResponse: 'Respuesta (下行)',
+  rawTabResponseStream: 'Respuesta (Stream)',
+  rawTabResponseMerged: 'Respuesta (Combinada)',
 
   // Call details
   contextSectionTitle: 'Contexto cargado',
@@ -90,6 +92,9 @@ export const es: LocaleKeys = {
   tokenInLabel: 'Tokens de entrada',
   tokenOutLabel: 'Tokens de salida',
   tokenCacheLabel: 'Caché leída',
+  tokenInTooltip: 'Tokens de entrada (suma de todas las llamadas)\n= input_tokens + cache_creation_input_tokens\nNo incluye aciertos de caché, que se muestran por separado',
+  tokenOutTooltip: 'Tokens de salida (suma de todas las llamadas)\n= output_tokens',
+  tokenCacheTooltip: 'Tokens leídos de caché (suma de todas las llamadas)\n= cache_read_input_tokens\nEsta parte del contexto se sirvió desde caché sin recomputación',
 
   // Capture proxy
   proxyLabel: 'Proxy captura',

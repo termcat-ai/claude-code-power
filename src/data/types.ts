@@ -140,17 +140,13 @@ export function computeTurnStats(
   const mcpSet = new Set<string>();
 
   for (const msg of turn.assistantEvents) {
-    // Within a turn there can be multiple API calls (tool_use rounds).
-    // inputTokens / cacheReadTokens / cacheWriteTokens: take the LAST event's
-    // values — each subsequent call includes the full prior context, so the
-    // last call's numbers already represent the total context window.
-    // outputTokens: sum across all calls (each call generates fresh tokens).
-    if (msg.inputTokens !== undefined) stats.inputTokens = msg.inputTokens;
-    if (msg.cacheReadTokens !== undefined) stats.cacheReadTokens = msg.cacheReadTokens;
-    if ((msg as { cacheWriteTokens?: number }).cacheWriteTokens !== undefined) {
-      stats.cacheWriteTokens = (msg as { cacheWriteTokens?: number }).cacheWriteTokens!;
-    }
+    // Sum all API calls in the turn. inputTokens counts only fresh tokens
+    // (raw + cache_creation) per call, so summing gives the real total
+    // without counting the same cached context N times.
+    stats.inputTokens += msg.inputTokens ?? 0;
     stats.outputTokens += msg.outputTokens ?? 0;
+    stats.cacheReadTokens += msg.cacheReadTokens ?? 0;
+    stats.cacheWriteTokens += (msg as { cacheWriteTokens?: number }).cacheWriteTokens ?? 0;
     for (const tu of msg.toolUses) {
       stats.totalToolUses++;
       switch (tu.kind) {

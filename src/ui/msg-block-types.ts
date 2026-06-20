@@ -17,12 +17,23 @@ export interface UserTextBlock {
   content: string;
 }
 
+export interface TokenUsageInfo {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costGems: number;
+  cacheReadTokens?: number;
+  showTokens?: boolean;
+  showGems?: boolean;
+}
+
 export interface AssistantTextBlock {
   type: 'assistant_text';
   id: string;
   timestamp: number;
   content: string;
   status: BlockStatus;
+  tokenUsage?: TokenUsageInfo;
 }
 
 export interface ToolUseBlock {

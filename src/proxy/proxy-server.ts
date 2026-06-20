@@ -107,8 +107,11 @@ export class ProxyServer {
     const forwardPort = targetUrl.port ? Number(targetUrl.port) : defaultPort;
 
     // Forward headers but override Host to match the upstream.
+    // Remove accept-encoding so upstream sends plain-text SSE (not gzip/br),
+    // which lets us store rawResponseSse as readable UTF-8.
     const forwardHeaders: http.OutgoingHttpHeaders = { ...req.headers };
     forwardHeaders['host'] = targetUrl.host;
+    delete forwardHeaders['accept-encoding'];
 
     const options: https.RequestOptions = {
       hostname: targetUrl.hostname,

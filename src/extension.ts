@@ -599,9 +599,154 @@ function readSyncSafe(filePath: string): string | null {
  * to the JSONL, so they cannot be included here.
  */
 type RawTab = { label: string; content: string; format: 'pre' };
+type RawGroup = { label: string; tabs: RawTab[] };
+type RawResult = { tabs: RawTab[] } | { groups: RawGroup[] };
 
-function getRawTurnParts(turnIndex: number, sessionFilePath: string): RawTab[] {
-  const err = (msg: string): RawTab[] => [{ label: 'Error', content: msg, format: 'pre' }];
+function fmtN(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(n);
+}
+
+/**
+ * Merge a raw Anthropic SSE stream into a human-readable string.
+ * Collects text deltas, tool_use inputs, and usage stats.
+ */
+function mergeResponseSse(rawSse: string): string {
+  type Block = { type: 'text'; text: string } | { type: 'tool_use'; name: string; input: string };
+  const blocks = new Map<number, Block>();
+  let model = '';
+  let inputTokens = 0, outputTokens = 0, cacheRead = 0;
+  let stopReason = '';
+
+  for (const line of rawSse.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    let d: Record<string, unknown>;
+    try { d = JSON.parse(line.slice(6)) as Record<string, unknown>; } catch { continue; }
+
+    if (d.type === 'message_start') {
+      const msg = d.message as Record<string, unknown> | undefined;
+      model = (msg?.model as string) ?? '';
+      const u = msg?.usage as Record<string, number> | undefined;
+      if (u) {
+        inputTokens = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+        cacheRead = u.cache_read_input_tokens ?? 0;
+      }
+    }
+    if (d.type === 'content_block_start') {
+      const idx = d.index as number;
+      const cb = d.content_block as Record<string, unknown> | undefined;
+      if (cb?.type === 'text') blocks.set(idx, { type: 'text', text: '' });
+      else if (cb?.type === 'tool_use') blocks.set(idx, { type: 'tool_use', name: (cb.name as string) ?? '', input: '' });
+    }
+    if (d.type === 'content_block_delta') {
+      const idx = d.index as number;
+      const blk = blocks.get(idx);
+      const delta = d.delta as Record<string, unknown> | undefined;
+      if (blk?.type === 'text' && delta?.type === 'text_delta') blk.text += (delta.text as string) ?? '';
+      if (blk?.type === 'tool_use' && delta?.type === 'input_json_delta') blk.input += (delta.partial_json as string) ?? '';
+    }
+    if (d.type === 'message_delta') {
+      const delta = d.delta as Record<string, unknown> | undefined;
+      stopReason = (delta?.stop_reason as string) ?? '';
+      const u = d.usage as Record<string, number> | undefined;
+      if (u?.output_tokens) outputTokens = u.output_tokens;
+    }
+  }
+
+  const out: string[] = [];
+  // Header
+  const meta: string[] = [];
+  if (model) meta.push(`model: ${model}`);
+  if (inputTokens > 0) meta.push(`in: ${fmtN(inputTokens)}`);
+  if (outputTokens > 0) meta.push(`out: ${fmtN(outputTokens)}`);
+  if (cacheRead > 0) meta.push(`cache: ${fmtN(cacheRead)}`);
+  if (stopReason) meta.push(`stop: ${stopReason}`);
+  out.push(`# ${meta.join('  |  ')}`);
+
+  // Content blocks in index order
+  const SEP = '─'.repeat(60);
+  for (const [, blk] of [...blocks.entries()].sort(([a], [b]) => a - b)) {
+    out.push('');
+    if (blk.type === 'text') {
+      out.push(blk.text || '(empty text block)');
+    } else {
+      out.push(`${SEP}`);
+      out.push(`[TOOL USE: ${blk.name}]`);
+      try { out.push(JSON.stringify(JSON.parse(blk.input), null, 2)); }
+      catch { out.push(blk.input || '{}'); }
+      out.push(SEP);
+    }
+  }
+
+  if (blocks.size === 0) out.push('\n(no content blocks found — response may still be streaming)');
+  return out.join('\n');
+}
+
+/** Extract token usage from a raw Anthropic SSE stream. */
+function parseUsageFromSse(rawSse: string): { input: number; output: number; cacheRead: number } | null {
+  let input = 0, output = 0, cacheRead = 0, found = false;
+  for (const line of rawSse.split('\n')) {
+    if (!line.startsWith('data: ')) continue;
+    try {
+      const d = JSON.parse(line.slice(6)) as Record<string, unknown>;
+      if (d.type === 'message_start') {
+        const u = (d.message as Record<string, unknown> | undefined)?.usage as Record<string, number> | undefined;
+        if (u) {
+          input = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+          cacheRead = u.cache_read_input_tokens ?? 0;
+          found = true;
+        }
+      }
+      if (d.type === 'message_delta') {
+        const u = d.usage as Record<string, number> | undefined;
+        if (u?.output_tokens) output = u.output_tokens;
+      }
+    } catch { /* skip malformed lines */ }
+  }
+  return found ? { input, output, cacheRead } : null;
+}
+
+/**
+ * Format a JSONL assistant `message` object into a human-readable merged string.
+ * Used when SSE stream is unavailable (JSONL reconstruction path).
+ */
+function formatAssistantMsgFromJsonl(msg: Record<string, unknown>): string {
+  const out: string[] = [];
+  const meta: string[] = [];
+  if (msg.model) meta.push(`model: ${msg.model as string}`);
+  const usage = msg.usage as Record<string, number> | undefined;
+  if (usage) {
+    const inp = (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+    if (inp) meta.push(`in: ${fmtN(inp)}`);
+    if (usage.output_tokens) meta.push(`out: ${fmtN(usage.output_tokens)}`);
+    if (usage.cache_read_input_tokens) meta.push(`cache: ${fmtN(usage.cache_read_input_tokens)}`);
+  }
+  if (msg.stop_reason) meta.push(`stop: ${msg.stop_reason as string}`);
+  out.push(`# ${meta.join('  |  ')}`);
+  out.push('# (JSONL reconstruction — SSE stream not stored; enable proxy to capture stream)');
+
+  const content = msg.content as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(content)) return out.join('\n');
+
+  const SEP = '─'.repeat(60);
+  for (const block of content) {
+    out.push('');
+    if (block.type === 'text') {
+      out.push((block.text as string) ?? '');
+    } else if (block.type === 'tool_use') {
+      out.push(SEP);
+      out.push(`[TOOL USE: ${block.name as string}]`);
+      try { out.push(JSON.stringify(block.input, null, 2)); }
+      catch { out.push(String(block.input)); }
+      out.push(SEP);
+    }
+  }
+  if (content.length === 0) out.push('\n(no content blocks)');
+  return out.join('\n');
+}
+
+function getRawTurnParts(turnIndex: number, sessionFilePath: string): RawResult {
+  const err = (msg: string): RawResult => ({ tabs: [{ label: 'Error', content: msg, format: 'pre' }] });
 
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { parseJsonlLine } = require('./data/jsonl-parser') as typeof import('./data/jsonl-parser');
@@ -664,44 +809,87 @@ function getRawTurnParts(turnIndex: number, sessionFilePath: string): RawTab[] {
 
   if (captures.length > 0) {
     try {
-      const SEP = '━'.repeat(60);
-      // Multiple calls → one tab per call; single call → two tabs (上行 / 下行).
-      if (captures.length === 1) {
-        const c = captures[0];
+      const makeTabs = (c: (typeof captures)[0]): RawTab[] => {
         const ts = new Date(c.captureTs).toISOString();
         const upstreamNote = `# ${ts}  upstream: ${c.upstreamUrl}\n\n`;
+        const reqJson = JSON.stringify(c.request, null, 2);
+
+        const usage = c.rawResponseSse ? parseUsageFromSse(c.rawResponseSse) : null;
+        // fresh input = total - cache_read (= input_tokens + cache_creation_input_tokens)
+        const freshIn = usage ? usage.input - usage.cacheRead : 0;
+        const upSuffix = usage
+          ? `  · in:${fmtN(freshIn)}${usage.cacheRead > 0 ? ` cache:${fmtN(usage.cacheRead)}` : ''}`
+          : '';
+        const outSuffix = usage ? `  · out:${fmtN(usage.output)}` : '';
+
+        const rawSse = c.rawResponseSse ?? '(not yet captured)';
+        const merged = c.rawResponseSse ? mergeResponseSse(c.rawResponseSse) : '(not yet captured)';
         return [
-          { label: t().rawTabRequest, content: upstreamNote + JSON.stringify(c.request, null, 2), format: 'pre' },
-          { label: t().rawTabResponse, content: c.rawResponseSse ?? '(not yet captured)', format: 'pre' },
+          { label: `${t().rawTabRequest}${upSuffix}`, content: upstreamNote + reqJson, format: 'pre' },
+          { label: `${t().rawTabResponseStream}${outSuffix}`, content: rawSse, format: 'pre' },
+          { label: `${t().rawTabResponseMerged}${outSuffix}`, content: merged, format: 'pre' },
         ];
+      };
+      // Single call → flat tabs (上行 / 下行).
+      // Multiple calls → two-level: level-1 = 调用 N, level-2 = 上行 / 下行.
+      if (captures.length === 1) {
+        return { tabs: makeTabs(captures[0]) };
       }
-      return captures.map((c, i) => {
-        const ts = new Date(c.captureTs).toISOString();
-        const req = JSON.stringify(c.request, null, 2);
-        const resp = c.rawResponseSse ?? '(not yet captured)';
-        const content = [
-          `# ${ts}  upstream: ${c.upstreamUrl}`,
-          '',
-          `${SEP} 上行（REQUEST）${'━'.repeat(Math.max(0, 60 - 10))}`,
-          '',
-          req,
-          '',
-          `${SEP} 下行（RESPONSE）${'━'.repeat(Math.max(0, 60 - 11))}`,
-          '',
-          resp,
-        ].join('\n');
-        return { label: `调用 ${i + 1}`, content, format: 'pre' as const };
-      });
+      return {
+        groups: captures.map((c, i) => ({ label: `调用 ${i + 1}`, tabs: makeTabs(c) })),
+      };
     } catch { /* fall through to JSONL path */ }
   }
 
-  // Fallback: JSONL reconstruction (no system prompt / tool defs).
+  // Fallback: JSONL reconstruction — per-call grouping.
+  // Walk the main branch again, accumulating cumulative messages. Each time we
+  // encounter an assistant event that belongs to this turn, snapshot the upstream
+  // messages (= what was sent to the API) and the response message (= what came back).
   try {
-    const note = '# JSONL reconstruction — system prompt and tool definitions not stored\n# Enable the capture proxy to see the full request.\n\n';
-    return [
-      { label: t().rawTabRequest, content: note + JSON.stringify(messages, null, 2), format: 'pre' as const },
-      { label: t().rawTabResponse, content: JSON.stringify(apiResponses, null, 2), format: 'pre' as const },
-    ];
+    const JSONL_NOTE = '# JSONL reconstruction — system prompt and tool definitions not stored\n# Enable the proxy to capture the full SSE stream.\n\n';
+    type CallEntry = { upstream: object[]; responseMsg: Record<string, unknown> };
+    const callEntries: CallEntry[] = [];
+    const cumMsgs: object[] = [];
+    const turnAssistantUuids = new Set(turn.assistantEvents.map((ae) => ae.uuid));
+
+    for (const e of idx.getMainBranch()) {
+      const raw = rawByUuid.get(e.uuid);
+      if (!raw) continue;
+      if (raw.type === 'user' && !raw.isMeta) {
+        const msg = raw.message as Record<string, unknown> | undefined;
+        if (msg) cumMsgs.push({ role: 'user', content: msg.content });
+      } else if (raw.type === 'assistant') {
+        const msg = raw.message as Record<string, unknown> | undefined;
+        if (msg) {
+          if (turnAssistantUuids.has(e.uuid)) {
+            callEntries.push({ upstream: [...cumMsgs], responseMsg: msg });
+          }
+          cumMsgs.push({ role: 'assistant', content: msg.content });
+        }
+      }
+      if (e.uuid === stopUuid) break;
+    }
+
+    if (callEntries.length === 0) return err('Error: no assistant events found in JSONL');
+
+    const makeJsonlTabs = (entry: CallEntry): RawTab[] => {
+      const upJson = JSON.stringify(entry.upstream, null, 2);
+      const usage = entry.responseMsg.usage as Record<string, number> | undefined;
+      const freshIn = usage ? (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) : 0;
+      const cacheRead = usage?.cache_read_input_tokens ?? 0;
+      const out = usage?.output_tokens ?? 0;
+      const upSuffix = freshIn > 0 || cacheRead > 0
+        ? `  · in:${fmtN(freshIn)}${cacheRead > 0 ? ` cache:${fmtN(cacheRead)}` : ''}`
+        : '';
+      const outSuffix = out > 0 ? `  · out:${fmtN(out)}` : '';
+      return [
+        { label: `${t().rawTabRequest}${upSuffix}`, content: JSONL_NOTE + upJson, format: 'pre' },
+        { label: `${t().rawTabResponseMerged}${outSuffix}`, content: formatAssistantMsgFromJsonl(entry.responseMsg), format: 'pre' },
+      ];
+    };
+
+    if (callEntries.length === 1) return { tabs: makeJsonlTabs(callEntries[0]) };
+    return { groups: callEntries.map((entry, i) => ({ label: `调用 ${i + 1}`, tabs: makeJsonlTabs(entry) })) };
   } catch {
     return err('Error: failed to serialize raw data');
   }
@@ -770,8 +958,8 @@ function buildHandlerDeps() {
         api.ui.showNotification(t().terminalNotFound, 'warning');
         return;
       }
-      const tabs = getRawTurnParts(turnIndex, sessionFile);
-      await api.ui.showMessage({ title: `Turn #${turnIndex} — Raw`, tabs });
+      const result = getRawTurnParts(turnIndex, sessionFile);
+      await api.ui.showMessage({ title: `Turn #${turnIndex} — Raw`, ...result });
     },
     getToolFilePath: (turnIndex: number, toolIndex: number) => {
       const activeSid = store.getState().activeTabSessionId;
@@ -829,7 +1017,10 @@ function buildHandlerDeps() {
           }
           store.setProxyEnabled(true);
           scheduleUiRefresh();
-          api.ui.showNotification(fmt(t().proxyStarted, { port }), 'success');
+          const activeSid = store.getState().activeTabSessionId;
+          const activeTab = activeSid ? store.getState().perTabStates.get(activeSid) : null;
+          const claudeRunning = activeTab?.status === 'active' || activeTab?.status === 'active-idle';
+          api.ui.showNotification(fmt(t().proxyStarted, { port }), claudeRunning ? 'warning' : 'success');
         } catch (err) {
           api.ui.showNotification(`Proxy start failed: ${String(err)}`, 'error');
         }

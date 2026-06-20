@@ -76,6 +76,8 @@ export const zh = {
   viewRawTooltip: '查看原始请求 / 响应 JSON',
   rawTabRequest: '上行（REQUEST）',
   rawTabResponse: '下行（RESPONSE）',
+  rawTabResponseStream: '下行（流式）',
+  rawTabResponseMerged: '下行（合并）',
 
   // Call details
   contextSectionTitle: '加载的上下文',
@@ -88,6 +90,9 @@ export const zh = {
   tokenInLabel: '上行 Token',
   tokenOutLabel: '下行 Token',
   tokenCacheLabel: '缓存命中',
+  tokenInTooltip: '上行 Token（所有调用之和）\n= input_tokens + cache_creation_input_tokens\n不含缓存命中，缓存命中单独显示',
+  tokenOutTooltip: '下行 Token（所有调用之和）\n= output_tokens',
+  tokenCacheTooltip: '缓存命中 Token（所有调用之和）\n= cache_read_input_tokens\n这部分上行内容直接从缓存读取，不重新计算',
 
   // Capture proxy
   proxyLabel: '请求捕获',

@@ -78,6 +78,8 @@ export const en: LocaleKeys = {
   viewRawTooltip: 'View raw request / response JSON',
   rawTabRequest: 'Request (上行)',
   rawTabResponse: 'Response (下行)',
+  rawTabResponseStream: 'Response (Stream)',
+  rawTabResponseMerged: 'Response (Merged)',
 
   // Call details
   contextSectionTitle: 'Loaded context',
@@ -90,6 +92,9 @@ export const en: LocaleKeys = {
   tokenInLabel: 'Input Tokens',
   tokenOutLabel: 'Output Tokens',
   tokenCacheLabel: 'Cache Hit',
+  tokenInTooltip: 'Input tokens (sum of all API calls)\n= input_tokens + cache_creation_input_tokens\nExcludes cache hits, which are shown separately',
+  tokenOutTooltip: 'Output tokens (sum of all API calls)\n= output_tokens',
+  tokenCacheTooltip: 'Cache hit tokens (sum of all API calls)\n= cache_read_input_tokens\nThis portion of the context was served from cache without recomputation',
 
   // Capture proxy
   proxyLabel: 'Capture Proxy',

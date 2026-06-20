@@ -141,8 +141,10 @@ function extractUsage(message: unknown): { inputTokens: number; outputTokens: nu
   const u = usage as Record<string, unknown>;
   const num = (k: string) => (typeof u[k] === 'number' ? (u[k] as number) : 0);
   return {
-    // inputTokens = raw (uncached) + cache_creation + cache_read → total context sent
-    inputTokens: num('input_tokens') + num('cache_creation_input_tokens') + num('cache_read_input_tokens'),
+    // inputTokens = fresh tokens only (input_tokens + cache_creation).
+    // cache_read is tracked separately so per-turn sums don't count the same
+    // cached context N times when there are N tool-use rounds.
+    inputTokens: num('input_tokens') + num('cache_creation_input_tokens'),
     outputTokens: num('output_tokens'),
     cacheReadTokens: num('cache_read_input_tokens'),
     cacheWriteTokens: num('cache_creation_input_tokens'),

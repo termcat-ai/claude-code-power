@@ -42,12 +42,24 @@ export function turnsToMsgBlocks(turns: PromptTurn[]): MsgBlock[] {
     });
     for (const msg of turn.assistantEvents) {
       if (msg.text) {
+        const inp = msg.inputTokens ?? 0;
+        const out = msg.outputTokens ?? 0;
+        const cache = msg.cacheReadTokens ?? 0;
         blocks.push({
           type: 'assistant_text',
           id: `asst-${msg.uuid}`,
           timestamp: msg.ts,
           content: msg.text,
           status: 'completed',
+          tokenUsage: (inp > 0 || out > 0) ? {
+            inputTokens: inp,
+            outputTokens: out,
+            totalTokens: inp + out + cache,
+            costGems: 0,
+            cacheReadTokens: cache > 0 ? cache : undefined,
+            showTokens: true,
+            showGems: false,
+          } : undefined,
         });
       }
       for (const tu of msg.toolUses) {
